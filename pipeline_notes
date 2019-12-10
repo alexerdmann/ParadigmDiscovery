@@ -1,0 +1,172 @@
+ANA with context pipeline
+
+
+TODOS:
+        
+    Exception handling for incredibly unlikely scenario where two paradigms get the same base
+
+    Implementation details for handling over-abundant cells.. It may be easiest to just say that GridManager doesn't support it, remove over-abundant wf from Grid and store it in an overabundant[wf] = [(base, cell),] dictionary which can be accessed by Step 2 to generate training data and can be used to manipulate the Corpus and Lexicon used to bias Step 1 in future rounds, but we would have to concede that Step 1 would never recover the overabundancy but we would hope that it gets put back later in step 4.
+
+
+0. INPUT
+    Corpus
+        Between 1 and 2 million tokens
+        Raw excluding basic punctuation separation (MOSES)
+    Lexicon
+        Entries all must occur in Corpus and all must share the same POS
+            This is realistic if we assume access to a good unsupervised POS tagger
+            Also, the amount of human labor required to remove entries not belonging to the specified POS is miniscule compared to the labor required to organize entries into paradigms and decorate with morphosyntactic labels
+            If we want to handle multiple POSs, we could simply independently initialize multiple grids and then funnel them into the same seq2seq EM system by adding a <POS> marker to the front of the <cell> marker
+
+1. INITIALIZE GRID
+
+    Purge any wfs from the grid which were not in the original Lexicon (only relevant for non-initial rounds)
+
+    Proposes a num_paradigms by num_cells grid where each wf in Lexicon is assigned to exactly one slot
+    Num_paradigms and num_cells are determined heuristically
+        Num_cells is determined by
+            Learning FastText embeddings (with a morphosyntactic inductive bias) on the corpus
+            k-means clustering the Lexicon's embeddings for all k in range(1,inf)
+                Stopping when deceleration of the clustering intertia decreases to less than the square root of the first measured deceleration
+                num_cells = k-1
+        Given num_cells clusters of Lexicon wfs, we assign forms to grid slots with num_paradigms falling out naturally
+            Starting with the largest cell cluster and continuing to the smallest
+                Assign all previously unassigned wfs in this cell to a new row/paradigm in the column corresponding to this cell
+            Consider adding a word from each cell/column to the right (i.e., smaller cell clusters) s.t. the resulting paradigm maximizes the following objective:
+                Number of base characters - number of signature characters across the paradigm, i.e.,
+                    Let base = lcs(wfs_in_row)
+                    Num_wfs_in_row * len(base) - sum(len(wf) - len(base) for wf in row)
+    Niether num_paradigms nor num_cells are fixed forever
+        Num_cells will not change though unless we re-initialize the Grid later on (Step ?)
+        Num_paradigms can fluidly at any step.
+    Initialize base and inflection class analysis
+        For each paradigm/row, get exponent signature and base using segment_functions
+        ICs = list(set(all_analyzed_exponent_signatures))  # i.e., it's a unique list
+        For each paradigm, we represent the base as lcs(wfs_in_row)_ICs.index(exp_signature)
+            e.g., row (run None ran None runs) might get the base rn_103 where its exp_signature ((u,), None, (a,), None, (u,s>)) would be the 103 unique IC in the comprehensive ICs list
+
+1.5 EVALUATE GRID
+    See bottom for evaluation details
+
+2. GENERATE TRAINING DATA
+
+    Purge any wfs from the grid which were not in the original Lexicon (only relevant for non-initial rounds)
+
+    Divide paradigms randomly into two folds, F1 and F2
+    For each fold's paradigm with base, b a s e <IC>, generate training instances for 4 seq2seq tasks
+        for each <cell> realized by w f (so ignoring empty cells)
+
+            Task_I) Inflection:
+            
+                Input: <TI> b a s e <IC> <cell>
+                Output: w f
+
+            Task_L) Lemmatization:
+
+                Input: <TL> <cell> w f
+                Output: b a s e <IC>
+
+            for each occurrence of (<cell>, wf) in the corpus (In the first round there is only one possible cell for each wf), we get the context within 20 characters on either side and use it to generate two training instances, one for each of the following tasks
+
+                Task_CI) Contextual_Inflection:
+                    depriving it of base and cell info forces model to use context
+
+                    Input: <TCI> p r e <$> t e x t <$> <MASK> <$> p o s t <$> t e x t
+                    Output: w f
+
+                Task_CL) Contextual_Lemmatization:
+                    depriving it of the cell and forcing it to predict cell
+                        (a) forces it to use context
+                        (b) means that we can pass the <TCL> prefix to the model at test time to tag specified words in raw text
+
+                    Input: <TCL> p r e <$> t e x t <$> <GO> w f <STOP> <$> p o s t <$> t e x t
+                    Output: b a s e <IC> <cell>
+
+3. BIFOLD MULTI-TASK TRAINING
+    If this is not the first time running this Step after the last time running Step 1, just continue training--No need to re-train models from scratch unless you've re-initialized, which changes vocabulary potentially and cell idxs
+
+    Train Model 1 (M1) transformer on F1 data for TI and TCI and F2 data for TL and TCL
+        This way M1 is trained on all tasks and understands how all realizations behave in and out of context, but M1 can still be tested on held out prediction directions
+    Train Model 2 (M2) transformer on F2 data for TI and TCI and F1 data for TL and TCL
+
+4. UPDATING THE GRID VIA EXPECTATION MAXIMIZATION
+    For each fold (here we'll demonstrate with F1)
+        For each paradigm in the fold
+
+            CONSIDER CHANGING BASES (WHICH INCLUDES ITS IC TAG)
+            For each (wf, cell) in the paradigm
+                Predict a new candidate_base using M1 on task TL (because M2 is biased having been trained on F1 examples for task TL)
+            Starting from the previous_base and then trying each unique candidate_base
+                Try to re-generate all attested (wf, cell)s in the paradigm using M2 on task TI (because M1 is biased having been trained on F1 examples for task TI)
+            Select new_base according to which re-generated the most attested realizations correctly, falling back to previous_base if no candidate_base beat it explicitly
+
+            CONSIDER CHANGING REALIZATIONS
+            Predict all paradigm slots from the new base
+            For all wfs in the paradigm before which are no longer predicted to belong to it
+                Track expelled_wfs[wf] = [(F1, old_base, old_cell, expelled_from_new_base),] as a dictionary mapping wfs to a list of tuples containing information necessary to recover their previous grid assignments
+            If there does not remain any wfs from Lexicon in the paradigm, throw away the paradigm
+            For any wfs in the new paradigm which are also in expelled_wfs
+                Remove these from expelled_wfs
+
+    HANDLE REMAINING UNASSIGNED WFS
+        For wf in expelled_wfs:
+
+            Get all contextual occurrences of wf and use the held out M* model for TCL to predict (candidate_base, candidate_cell) tuples
+                Held out model M* is that which was not trained for TCL on the fold which wf belonged to according to expelled_wfs[wf][0][0]
+
+            To disambiguate candidate tuples, try to perform TI and TL using the candidate analyses and rank analysis tuples first by TI_success + TL_success and then by number of times analysis was proposed in context
+                TI/L_success is 1 if the prediction was successful using the candidate base and cell, 0 otherwise 
+
+            If the disambiguated base already exists in the grid, add wf to that paradigm in the corresponding disambiguated cell, potentially creating an over-abundant entry
+            Otherwise, start a new paradigm for the disambiguated base
+
+4.5. EVALUATE
+
+5. REPEAT FROM STEP 2 UNTIL REACH STOPPING CRITERIA X
+
+6. REPEAT FROM STEP 1 BUT WITH A MODIFIED CORPUS AND LEXICON
+    Use TCL to tag corpus instances of all wfs in Lexicon as <row_rowID>[wf]<col_colID> where we tell FastText to treat <row_rowID> and <col_colID> as single symbols
+        ([ and ] then allow us to model word boundaries and FT does this under the hood normally and it would otherwise get obscured by adding in the row and col ID markers)
+    After clustering this input and thereby potentially updating num_cells, return Lexicon to normal form and return wfs to their original shape, but only after placing them in the grid
+        (this allows the potentially multiple analyses for each wf to be preserved in the new initialization)
+
+
+EVALUATION DETAILS
+
+Intrinsic
+
+    Known flaws with Purity when the number of clusters varies
+        Geo-mean doesn't exactly fix that problem
+        Could only attempt to evaluate intrinsically with oracle num_cells
+            baseline could use the same size grid and randomly fill slots without replacement
+        For paradigms, could only evaluate paradigms that were singleton in neither proposed nor reference clusters
+
+    V-measure?
+
+Extrinsic
+
+    Test set contains instances like the following
+
+        (ref_paradigm) (ref_src_cell) src_word (ref_trg_cell)    trg_word
+
+    Where for each reference paradigm with unattested forms
+        (not cells because we may have used raw corpus already to identify syncretic realizations of attested forms in unattested cells.. so they may not still be unattested for us)
+
+        We randomly select an attested cell and let its realization be src_word
+        We randomly select unattested cells until we get one whose realization is not in Lexicon and we let that be trg_word
+
+    For each test instance, we get credit if trg_word exists in any of the rows in which we have slotted src_word in our grid
+
+    For the supervised system we compare against, they get credit if they can generate trg_word from src_cell src_word trg_cell or any unattested trg_cell in the reference paradigm
+        They train on all pairwise comparisons from the reference lexicon
+
+Down Stream
+
+    MT will be considered in Future Work (final dissertation chapter)
+
+
+
+
+
+
+
