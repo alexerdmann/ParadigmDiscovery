@@ -1,4 +1,4 @@
-# ParadigmDiscovery
+# Unsupervised Paradigm Discovery
 
 ## Overview
 
