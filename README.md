@@ -7,6 +7,6 @@ This is the repository for the paper "The Paradigm Discovery Problem" from Alexa
 ## Demo
 
 ```
-lg=eng_V; python Scripts/ANA.py -C Data/Final/Intrinsic/Corpus/corp.$lg -L Data/Final/Intrinsic/Lexicon/lex.$lg -m Models -l $lg -c oracle -U Data/Final/UniMorph_intersect/inter_lex.$lg -e Data/Final/Extrinsic/analogy.$lg
+lg=eng_V; python Scripts/ANA.py -C Data/Debug/Intrinsic/Corpus/corp.$lg -L Data/Debug/Intrinsic/Lexicon/lex.$lg -m Models -l $lg -c oracle -U Data/Debug/UniMorph_intersect/inter_lex.$lg -e Data/Debug/Extrinsic/analogy.$lg
 ```
 
