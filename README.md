@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is the repository for our ACL 2020 paper [The Paradigm Discovery Problem](https://www.aclweb.org/anthology/2020.acl-main.695.pdf). This code release represents the published system, though better results have been achieved since the paper was accepted. If you're interested in the improved code, please reach out to me (ae1541@nyu.edu).
+This is the repository for our ACL 2020 paper [The Paradigm Discovery Problem](https://www.aclweb.org/anthology/2020.acl-main.695.pdf). This code release represents the published system, though better results have been achieved since the paper was accepted. If you're interested in the improved code, please reach out to me.
 
 ## Prerequisites
 
