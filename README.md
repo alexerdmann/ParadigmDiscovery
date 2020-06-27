@@ -6,7 +6,7 @@ This is the repository for the ACL 2020 paper "The Paradigm Discovery Problem" f
 
 ## Prerequisites
 
-This repository was tested using TensorFlow 1.14. I *tried* to make the code forwards compatible with TensorFlow 2.0. In theory, you *should* only have to comment out line xxx in *Scripts/xxx.py*, though I have not tested this.
+This repository was tested using TensorFlow 1.14. I *tried* to make the code forwards compatible with TensorFlow 2.0. In theory, you *should* only have to comment out line 140 in *Scripts/ANA.py*, though I have not tested this.
 
 ## Usage
 
